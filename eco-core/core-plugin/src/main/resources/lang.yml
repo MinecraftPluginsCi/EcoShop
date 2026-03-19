@@ -10,11 +10,16 @@ messages:
   must-specify-item: "&cYou must specify an item!"
   invalid-item: "&cInvalid item!"
   reset-buys: "&fReset how many times &r%player%&r&f bought &r%item%&f!"
+  reset-buys-batch: "&fReset buy history for &r%players%&f player(s) across &r%items%&f item(s) (&r%resets%&f resets)."
+  reset-sells: "&fReset how many times &r%player%&r&f sold &r%item%&f!"
+  reset-sells-batch: "&fReset sell history for &r%players%&f player(s) across &r%items%&f item(s) (&r%resets%&f resets)."
   invalid-amount: "&cInvalid amount!"
   max-purchase-amount-exceeded: "&cYou can't buy more than %maxAmount% of an item at once!"
 
   sell-status:
     cannot-sell: "&cThis item can't be sold!"
+    sold-too-many: "&cYou can't sell this item again!"
+    global-sold-too-many: "&cThe server doesn't need any more of this item!"
     no-permission: "&cYou don't have permission to sell this item!"
     missing-requirements: "&cYou can't sell this item!"
     dont-have-item: "&cYou don't have any of this item!"

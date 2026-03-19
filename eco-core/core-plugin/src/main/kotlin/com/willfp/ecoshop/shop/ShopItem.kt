@@ -131,6 +131,10 @@ class ShopItem(
 
     val globalLimit = config.getIntOrNull("buy.global-limit") ?: Int.MAX_VALUE
 
+    val sellLimit = config.getIntOrNull("sell.limit") ?: Int.MAX_VALUE
+
+    val globalSellLimit = config.getIntOrNull("sell.global-limit") ?: Int.MAX_VALUE
+
     private val maxAtOnce = config.getIntOrNull("buy.max-at-once") ?: Int.MAX_VALUE
 
     private val timesBoughtKey = PersistentDataKey(
@@ -139,45 +143,11 @@ class ShopItem(
         0
     )
 
-    // * Deprecated options, to be removed in the future * //
-    @Deprecated("Use sell-effects instead")
-    private val sellItemMessage: List<String>? = config.getStringsOrNull("sell.sell-message")
-
-    @Deprecated("Use buy-effects instead")
-    private val buyItemMessage: List<String>? = config.getStringsOrNull("buy.buy-message")
-
-    @Deprecated("Use sell-effects instead")
-    private val sellCommands: List<String>? = config.getStringsOrNull("sell.sell-commands")
-
-    @Deprecated("Use buy-effects instead")
-    val commands = config.getStrings("command") + config.getStrings("commands")
-
-    // * Deprecated options, to be removed in the future * //
-    init {
-        if (config.has("sell.sell-commands")) {
-            plugin.logger.warning("Shop item '$id' uses deprecated 'sell.sell-commands'. Please switch to 'sell-effects'.")
-        }
-
-        if (config.has("command") || config.has("commands")) {
-            plugin.logger.warning("Shop item '$id' uses deprecated 'commands' buy option. Please switch to 'buy-effects'.")
-        }
-
-        if (config.has("buy.buy-message")) {
-            plugin.logger.warning("Shop item '$id' uses deprecated 'buy.buy-message'. Please switch to 'buy-effects'.")
-        }
-
-        if (config.has("sell.sell-message")) {
-            plugin.logger.warning("Shop item '$id' uses deprecated 'sell.sell-message'. Please switch to 'sell-effects'.")
-        }
-
-        if (config.has("buy.require")) {
-            plugin.logger.warning("Shop item '$id' uses deprecated option 'buy.require'. Please switch to 'buy.conditions' instead.")
-        }
-
-        if (config.has("sell.require")) {
-            plugin.logger.warning("Shop item '$id' uses deprecated option 'sell.require'. Please switch to 'sell.conditions' instead.")
-        }
-    }
+    private val timesSoldKey = PersistentDataKey(
+        plugin.createNamespacedKey("${id}_times_sold"),
+        PersistentDataKeyType.INT,
+        0
+    )
 
     init {
         if (this.item != null && this.item.item.amount != 1) {
@@ -275,6 +245,21 @@ class ShopItem(
         return Bukkit.getServer().profile.read(timesBoughtKey)
     }
 
+    /** Get the max amount of times this player can sell this item again. */
+    fun getSellsLeft(player: OfflinePlayer): Int {
+        return sellLimit - getTotalSells(player)
+    }
+
+    /** Get the total amount of times a player has sold this item. */
+    fun getTotalSells(player: OfflinePlayer): Int {
+        return player.profile.read(timesSoldKey)
+    }
+
+    /** Get the total amount of times a server has sold this item. */
+    fun getTotalGlobalSells(): Int {
+        return Bukkit.getServer().profile.read(timesSoldKey)
+    }
+
     /** If a [player] is allowed to purchase this item. */
     fun getBuyStatus(player: Player, amount: Int, buyType: BuyType): BuyStatus {
         when (buyType) {
@@ -292,13 +277,6 @@ class ShopItem(
 
         if (!player.hasPermission("ecoshop.buy.$id")) {
             return BuyStatus.NO_PERMISSION
-        }
-
-        // Deprecated option, to be removed in the future. Use buy-conditions instead.
-        if (config.has("buy.require")) {
-            if (config.getDoubleFromExpression("buy.require", player) != 1.0) {
-                return BuyStatus.MISSING_REQUIREMENTS
-            }
         }
 
         val conditions = if (buyType == BuyType.ALT) altBuyConditions else buyConditions
@@ -327,9 +305,8 @@ class ShopItem(
     /**
      * Make a [player] buy this item a certain [amount] of times.
      *
-     * This handles payment and dispatching the items / commands.
+     * This handles payment and dispatching the items.
      */
-    @Suppress("DEPRECATION")
     fun buy(
         player: Player,
         amount: Int,
@@ -359,14 +336,6 @@ class ShopItem(
             queue.push()
         }
 
-        for (command in commands) {
-            Bukkit.dispatchCommand(
-                Bukkit.getConsoleSender(),
-                command.replace("%player%", player.name)
-                    .replace("%amount%", amount.toString())
-            )
-        }
-
         buyEffects?.trigger(
             player.toDispatcher(),
             TriggerData(
@@ -377,16 +346,6 @@ class ShopItem(
                 altValue = basePrice.getValue(player) * amount
             )
         )
-
-        if (buyItemMessage != null) {
-            for (message in buyItemMessage) {
-                player.sendMessage(
-                    message.formatEco()
-                        .replace("%player%", player.name)
-                        .replace("%amount%", amount.toString())
-                )
-            }
-        }
 
         player.profile.write(timesBoughtKey, getTotalBuys(player) + 1)
         Bukkit.getServer().profile.write(timesBoughtKey, getTotalGlobalBuys() + 1)
@@ -399,21 +358,23 @@ class ShopItem(
     }
 
     /** Get if a [player] is allowed to sell this item. */
-    fun getSellStatus(player: Player): SellStatus {
+    @JvmOverloads
+    fun getSellStatus(player: Player, amount: Int = 1): SellStatus {
         // Can't sell a command or an effect
         if (item == null || sellPrice == null) {
             return SellStatus.CANNOT_SELL
         }
 
-        if (!player.hasPermission("ecoshop.sell.$id")) {
-            return SellStatus.NO_PERMISSION
+        if (getTotalSells(player) + amount > sellLimit) {
+            return SellStatus.SOLD_TOO_MANY
         }
 
-        // Deprecated option, to be removed in the future. Use sell-conditions instead.
-        if (config.has("sell.require")) {
-            if (config.getDoubleFromExpression("sell.require", player) != 1.0) {
-                return SellStatus.MISSING_REQUIREMENTS
-            }
+        if (getTotalGlobalSells() + amount > globalSellLimit) {
+            return SellStatus.GLOBAL_SOLD_TOO_MANY
+        }
+
+        if (!player.hasPermission("ecoshop.sell.$id")) {
+            return SellStatus.NO_PERMISSION
         }
 
         if (!sellConditions.areMet(player.toDispatcher(), EmptyProvidedHolder)) {
@@ -426,17 +387,20 @@ class ShopItem(
     /** Get if a [player] is allowed to sell this item. */
     @JvmOverloads
     fun getCurrentSellStatus(player: Player, amount: Int? = null): SellStatus {
-        val base = getSellStatus(player)
+        val requestedAmount = amount ?: 1
+        val base = getSellStatus(player, requestedAmount)
 
         if (base != SellStatus.ALLOW) {
             return base
         } else {
-            if (getAmountInPlayerInventory(player) == 0) {
+            val amountInInventory = getAmountInPlayerInventory(player)
+
+            if (amountInInventory == 0) {
                 return SellStatus.DONT_HAVE_ITEM
             }
 
             if (amount != null) {
-                if (getAmountInPlayerInventory(player) < amount) {
+                if (amountInInventory < amount) {
                     return SellStatus.DONT_HAVE_ENOUGH
                 }
             }
@@ -452,7 +416,6 @@ class ShopItem(
      * player doesn't have a certain amount of items it will sell as many as
      * possible.
      */
-    @Suppress("DEPRECATION")
     fun sell(
         player: Player,
         amount: Int,
@@ -466,7 +429,14 @@ class ShopItem(
             return 0
         }
 
-        val amountSold = amount.coerceAtMost(getAmountInPlayerInventory(player))
+        val amountSold = amount
+            .coerceAtMost(getAmountInPlayerInventory(player))
+            .coerceAtMost(getSellsLeft(player))
+            .coerceAtMost(globalSellLimit - getTotalGlobalSells())
+
+        if (amountSold <= 0) {
+            return 0
+        }
 
         val priceMultipliers = deductItems(player, amountSold)
 
@@ -476,37 +446,18 @@ class ShopItem(
 
         shop?.sellSound?.playTo(player)
 
-        if (sellCommands != null) {
-            plugin.logger.warning("The 'sell-commands' option is deprecated, please use 'sell-effects' instead.")
-            for (command in sellCommands) {
-                Bukkit.dispatchCommand(
-                    Bukkit.getConsoleSender(),
-                    command.replace("%player%", player.name)
-                        .replace("%amount%", amountSold.toString())
-                )
-            }
-        }
-
         sellEffects?.trigger(
             player.toDispatcher(),
             TriggerData(
                 player = player,
                 location = player.location,
                 item = player.inventory.itemInMainHand,
-                value = amount.toDouble(),
-                altValue = sellPrice.getValue(player) * amount
+                value = amountSold.toDouble(),
+                altValue = sellPrice.getValue(player) * amountSold
             )
         )
 
-        if (sellItemMessage != null) {
-            for (message in sellItemMessage) {
-                player.sendMessage(
-                    message.formatEco()
-                        .replace("%player%", player.name)
-                        .replace("%amount%", amountSold.toString())
-                )
-            }
-        }
+        recordSell(player, amountSold)
 
         return amountSold
     }
@@ -588,6 +539,21 @@ class ShopItem(
         player.profile.write(timesBoughtKey, 0)
     }
 
+    fun resetTimesSold(player: OfflinePlayer) {
+        val totalSellsForPlayer = getTotalSells(player)
+        Bukkit.getServer().profile.write(timesSoldKey, getTotalGlobalSells() - totalSellsForPlayer)
+        player.profile.write(timesSoldKey, 0)
+    }
+
+    fun recordSell(player: OfflinePlayer, amount: Int) {
+        if (amount <= 0) {
+            return
+        }
+
+        player.profile.write(timesSoldKey, getTotalSells(player) + amount)
+        Bukkit.getServer().profile.write(timesSoldKey, getTotalGlobalSells() + amount)
+    }
+
     fun getBuyPrice(buyType: BuyType) = when (buyType) {
         BuyType.ALT -> altBuyPrice
         else -> buyPrice
@@ -616,7 +582,7 @@ val ItemStack.shopItem: ShopItem?
 
 fun ItemStack.isSellable(player: Player): Boolean {
     val item = this.shopItem ?: return false
-    if (item.getSellStatus(player) != SellStatus.ALLOW) {
+    if (item.getCurrentSellStatus(player, this.amount) != SellStatus.ALLOW) {
         return false
     }
 
@@ -637,23 +603,25 @@ fun ItemStack.sell(
     player: Player,
     shop: Shop? = null
 ): Boolean {
-    if (!this.isSellable(player)) {
+    val item = this.shopItem ?: return false
+    if (item.getCurrentSellStatus(player, this.amount) != SellStatus.ALLOW) {
         return false
     }
 
-    val price = this.getUnitSellValue(player)
-    val item = this.shopItem!!
+    val price = item.sellPrice ?: return false
+    val soldAmount = this.amount
 
-    val event = EcoShopSellEvent(player, item, item.sellPrice!!, this)
+    val event = EcoShopSellEvent(player, item, price, this)
     Bukkit.getPluginManager().callEvent(event)
 
-    price.giveTo(player, this.amount.toDouble() * event.multiplier)
+    price.giveTo(player, soldAmount.toDouble() * event.multiplier)
+    item.recordSell(player, soldAmount)
 
     player.sendMessage(
         plugin.langYml.getMessage("sold-item")
-            .replace("%amount%", this.amount.toString())
+            .replace("%amount%", soldAmount.toString())
             .replace("%item%", item.displayName)
-            .replace("%price%", price.getDisplay(player, this.amount.toDouble() * event.multiplier))
+            .replace("%price%", price.getDisplay(player, soldAmount.toDouble() * event.multiplier))
     )
 
     shop?.sellSound?.playTo(player)
@@ -690,30 +658,52 @@ fun Collection<ItemStack>.sell(
     val displayBuilder = CombinedDisplayPrice.builder(player)
 
     for (itemStack in this) {
-        if (!itemStack.isSellable(player)) {
+        val item = itemStack.shopItem
+        if (item == null) {
             unsold += itemStack
+            continue
+        }
+
+        if (item.getSellStatus(player) != SellStatus.ALLOW) {
+            unsold += itemStack
+            continue
+        }
+
+        val sellableAmount = itemStack.amount
+            .coerceAtMost(item.getSellsLeft(player))
+            .coerceAtMost(item.globalSellLimit - item.getTotalGlobalSells())
+
+        if (sellableAmount <= 0) {
+            unsold += itemStack
+            continue
         }
 
         val price = itemStack.getUnitSellValue(player)
-        val item = itemStack.shopItem!!
 
         val event = EcoShopSellEvent(player, item, item.sellPrice!!, itemStack)
         Bukkit.getPluginManager().callEvent(event)
 
-        price.giveTo(player, itemStack.amount.toDouble() * event.multiplier)
+        price.giveTo(player, sellableAmount.toDouble() * event.multiplier)
+        item.recordSell(player, sellableAmount)
 
         displayBuilder.add(
             price,
-            itemStack.amount.toDouble() * event.multiplier
+            sellableAmount.toDouble() * event.multiplier
         )
 
-        amountSold += itemStack.amount
-        itemStack.amount = 0
-        itemStack.type = Material.AIR
+        amountSold += sellableAmount
+
+        if (sellableAmount >= itemStack.amount) {
+            itemStack.amount = 0
+            itemStack.type = Material.AIR
+        } else {
+            itemStack.amount -= sellableAmount
+            unsold += itemStack
+        }
     }
 
     // If none sold.
-    if (unsold.size == this.size) {
+    if (amountSold == 0) {
         return unsold
     }
 

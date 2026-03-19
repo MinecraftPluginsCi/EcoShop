@@ -9,10 +9,10 @@ import org.bukkit.Bukkit
 import org.bukkit.command.CommandSender
 import org.bukkit.util.StringUtil
 
-object CommandResetBuys : Subcommand(
+object CommandResetSells : Subcommand(
     plugin,
-    "resetbuys",
-    "ecoshop.command.resetbuys",
+    "resetsells",
+    "ecoshop.command.resetsells",
     false
 ) {
     override fun onExecute(sender: CommandSender, args: List<String>) {
@@ -75,7 +75,7 @@ object CommandResetBuys : Subcommand(
 
         for (player in players) {
             for (item in items) {
-                item.resetTimesBought(player)
+                item.resetTimesSold(player)
             }
         }
 
@@ -84,7 +84,7 @@ object CommandResetBuys : Subcommand(
             val item = items.first()
 
             sender.sendMessage(
-                plugin.langYml.getMessage("reset-buys", StringUtils.FormatOption.WITHOUT_PLACEHOLDERS)
+                plugin.langYml.getMessage("reset-sells", StringUtils.FormatOption.WITHOUT_PLACEHOLDERS)
                     .replace("%player%", player.savedDisplayName)
                     .replace("%item%", item.displayName)
             )
@@ -92,7 +92,7 @@ object CommandResetBuys : Subcommand(
         }
 
         sender.sendMessage(
-            plugin.langYml.getMessage("reset-buys-batch", StringUtils.FormatOption.WITHOUT_PLACEHOLDERS)
+            plugin.langYml.getMessage("reset-sells-batch", StringUtils.FormatOption.WITHOUT_PLACEHOLDERS)
                 .replace("%players%", players.size.toString())
                 .replace("%items%", items.size.toString())
                 .replace("%resets%", (players.size * items.size).toString())
@@ -125,3 +125,5 @@ object CommandResetBuys : Subcommand(
         return completions
     }
 }
+
+
